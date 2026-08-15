@@ -65,7 +65,6 @@ jobs:
 
           if [ -z "$PACKAGE_FILE" ]; then
             echo "ERROR: package.json not found."
-            find extracted -maxdepth 5 -type f | head -200
             exit 1
           fi
 
@@ -80,11 +79,11 @@ jobs:
 
           if [ -n "$SETTINGS_FILE" ]; then
             ANDROID_DIR=$(dirname "$SETTINGS_FILE")
+
             echo "ANDROID PROJECT:"
             echo "$ANDROID_DIR"
+
             echo "ANDROID_DIR=$ANDROID_DIR" >> "$GITHUB_ENV"
-          else
-            echo "Android project will be created/synced by Capacitor."
           fi
 
       - name: Setup Node.js
@@ -121,25 +120,18 @@ jobs:
         run: |
           set -e
 
-          if [ -z "${ANDROID_DIR:-}" ]; then
-            echo "Searching for Android project..."
+          SETTINGS_FILE=$(find extracted -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1)
 
-            SETTINGS_FILE=$(find extracted -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1)
-
-            if [ -n "$SETTINGS_FILE" ]; then
-              ANDROID_DIR=$(dirname "$SETTINGS_FILE")
-              echo "ANDROID_DIR=$ANDROID_DIR" >> "$GITHUB_ENV"
-            fi
-          fi
-
-          if [ -z "${ANDROID_DIR:-}" ]; then
-            echo "ERROR: Android project not found."
-            echo "Available files:"
-            find extracted -maxdepth 5 -type f | head -300
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "ERROR: Android Gradle project not found."
             exit 1
           fi
 
-          echo "ANDROID PROJECT:"
+          ANDROID_DIR=$(dirname "$SETTINGS_FILE")
+
+          echo "ANDROID_DIR=$ANDROID_DIR" >> "$GITHUB_ENV"
+
+          echo "Android project:"
           echo "$ANDROID_DIR"
 
       - name: Install Gradle
@@ -153,10 +145,6 @@ jobs:
         run: |
           set -e
 
-          echo "================================="
-          echo "CREATING GRADLE WRAPPER"
-          echo "================================="
-
           if [ ! -f "gradlew" ]; then
             gradle wrapper --gradle-version 8.7
           fi
@@ -164,6 +152,28 @@ jobs:
           chmod +x gradlew
 
           echo "Gradle wrapper ready."
+
+      - name: Enable AndroidX
+        working-directory: ${{ env.ANDROID_DIR }}
+        shell: bash
+        run: |
+          set -e
+
+          echo "================================="
+          echo "ENABLING ANDROIDX"
+          echo "================================="
+
+          touch gradle.properties
+
+          grep -qxF "android.useAndroidX=true" gradle.properties || \
+            echo "android.useAndroidX=true" >> gradle.properties
+
+          grep -qxF "android.enableJetifier=true" gradle.properties || \
+            echo "android.enableJetifier=true" >> gradle.properties
+
+          echo ""
+          echo "gradle.properties:"
+          cat gradle.properties
 
       - name: Fix Android Manifest
         working-directory: ${{ env.ANDROID_DIR }}
