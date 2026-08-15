@@ -18,14 +18,38 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Check Project Structure
+        shell: bash
+        run: |
+          echo "========== PROJECT =========="
+          pwd
+          echo ""
+          echo "========== ROOT FILES =========="
+          ls -la
+          echo ""
+          echo "========== ANDROID FOLDER =========="
+          if [ -d "android" ]; then
+            ls -la android
+          else
+            echo "ERROR: android folder not found"
+            exit 1
+          fi
+          echo ""
+          echo "========== GRADLE =========="
+          if [ -f "android/gradlew" ]; then
+            echo "android/gradlew FOUND"
+          else
+            echo "ERROR: android/gradlew NOT FOUND"
+            exit 1
+          fi
 
       - name: Fix AndroidManifest
         shell: bash
@@ -34,50 +58,21 @@ jobs:
 
           MANIFEST="android/app/src/main/AndroidManifest.xml"
 
-          echo "Checking AndroidManifest..."
-
           if [ ! -f "$MANIFEST" ]; then
             echo "ERROR: AndroidManifest.xml not found"
             exit 1
           fi
 
-          echo "Original Manifest:"
-          cat "$MANIFEST"
+          echo "Fixing AndroidManifest..."
 
-          # Remove missing launcher icon resources
-          sed -i '/android:icon="@mipmap\/ic_launcher"/d' "$MANIFEST"
-          sed -i '/android:roundIcon="@mipmap\/ic_launcher_round"/d' "$MANIFEST"
+          sed -i 's/android:icon="@mipmap\/ic_launcher"//g' "$MANIFEST"
+          sed -i 's/android:roundIcon="@mipmap\/ic_launcher_round"//g' "$MANIFEST"
 
-          # Replace missing custom TestMitra theme
           sed -i 's#android:theme="@style/Theme.TestMitra"#android:theme="@android:style/Theme.Material.Light.NoActionBar"#g' "$MANIFEST"
 
-          echo ""
-          echo "Fixed Manifest:"
-          cat "$MANIFEST"
+          echo "Manifest fixed."
 
-      - name: Check Android project
-        shell: bash
-        run: |
-          set -e
-
-          if [ ! -d "android" ]; then
-            echo "ERROR: android folder not found"
-            exit 1
-          fi
-
-          if [ ! -f "android/gradlew" ]; then
-            echo "ERROR: android/gradlew not found"
-            exit 1
-          fi
-
-          if [ ! -d "android/app" ]; then
-            echo "ERROR: android/app folder not found"
-            exit 1
-          fi
-
-          echo "Android project structure OK."
-
-      - name: Make Gradle executable
+      - name: Make Gradle Executable
         working-directory: android
         run: chmod +x gradlew
 
@@ -92,16 +87,19 @@ jobs:
       - name: Verify APK
         shell: bash
         run: |
-          echo "Searching for APK..."
+          echo "========== APK FILES =========="
 
           find android/app/build/outputs -type f -name "*.apk" -print
 
-          if ! find android/app/build/outputs -type f -name "*.apk" | grep -q ".apk"; then
+          APK_COUNT=$(find android/app/build/outputs -type f -name "*.apk" | wc -l)
+
+          if [ "$APK_COUNT" -eq 0 ]; then
             echo "ERROR: APK was not generated."
             exit 1
           fi
 
-          echo "APK generated successfully."
+          echo ""
+          echo "APK BUILD SUCCESSFUL."
 
       - name: Upload TEST MITRA APK
         uses: actions/upload-artifact@v4
