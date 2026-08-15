@@ -1,0 +1,111 @@
+name: Build Test Mitra APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  build:
+    name: Build Test Mitra APK
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Fix AndroidManifest
+        shell: bash
+        run: |
+          set -e
+
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+
+          echo "Checking AndroidManifest..."
+
+          if [ ! -f "$MANIFEST" ]; then
+            echo "ERROR: AndroidManifest.xml not found"
+            exit 1
+          fi
+
+          echo "Original Manifest:"
+          cat "$MANIFEST"
+
+          # Remove missing launcher icon resources
+          sed -i '/android:icon="@mipmap\/ic_launcher"/d' "$MANIFEST"
+          sed -i '/android:roundIcon="@mipmap\/ic_launcher_round"/d' "$MANIFEST"
+
+          # Replace missing custom TestMitra theme
+          sed -i 's#android:theme="@style/Theme.TestMitra"#android:theme="@android:style/Theme.Material.Light.NoActionBar"#g' "$MANIFEST"
+
+          echo ""
+          echo "Fixed Manifest:"
+          cat "$MANIFEST"
+
+      - name: Check Android project
+        shell: bash
+        run: |
+          set -e
+
+          if [ ! -d "android" ]; then
+            echo "ERROR: android folder not found"
+            exit 1
+          fi
+
+          if [ ! -f "android/gradlew" ]; then
+            echo "ERROR: android/gradlew not found"
+            exit 1
+          fi
+
+          if [ ! -d "android/app" ]; then
+            echo "ERROR: android/app folder not found"
+            exit 1
+          fi
+
+          echo "Android project structure OK."
+
+      - name: Make Gradle executable
+        working-directory: android
+        run: chmod +x gradlew
+
+      - name: Clean Gradle
+        working-directory: android
+        run: ./gradlew clean --no-daemon
+
+      - name: Build Debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --stacktrace --no-daemon
+
+      - name: Verify APK
+        shell: bash
+        run: |
+          echo "Searching for APK..."
+
+          find android/app/build/outputs -type f -name "*.apk" -print
+
+          if ! find android/app/build/outputs -type f -name "*.apk" | grep -q ".apk"; then
+            echo "ERROR: APK was not generated."
+            exit 1
+          fi
+
+          echo "APK generated successfully."
+
+      - name: Upload TEST MITRA APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: TEST-MITRA-APK
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
