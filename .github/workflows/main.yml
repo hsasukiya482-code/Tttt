@@ -1,4 +1,4 @@
-name: Build Test Mitra APK
+name: Build TEST MITRA APK
 
 on:
   workflow_dispatch:
@@ -23,22 +23,25 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: extracted/package.json
+
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Find and Extract ZIP
+      - name: Find TEST MITRA ZIP
         shell: bash
         run: |
           set -e
 
-          echo "================================="
-          echo "FINDING TEST MITRA ZIP"
-          echo "================================="
-
           ZIP_FILE=$(find . -maxdepth 2 -type f -iname "*.zip" | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: No ZIP file found."
+            echo "ERROR: TEST MITRA ZIP not found."
             exit 1
           fi
 
@@ -47,128 +50,133 @@ jobs:
 
           mkdir -p extracted
 
-          echo "================================="
-          echo "EXTRACTING ZIP"
-          echo "================================="
-
           unzip -q "$ZIP_FILE" -d extracted
 
-          echo "ZIP EXTRACTED."
+          echo "ZIP extracted successfully."
 
-          echo "================================="
-          echo "SEARCHING FOR GRADLE PROJECT"
-          echo "================================="
-
-          GRADLEW=$(find extracted -type f -name "gradlew" | head -n 1)
-
-          if [ -z "$GRADLEW" ]; then
-            echo "ERROR: gradlew not found inside ZIP."
-            echo ""
-            echo "Files inside ZIP:"
-            find extracted -maxdepth 5 -type f | head -200
-            exit 1
-          fi
-
-          PROJECT_DIR=$(dirname "$GRADLEW")
-
-          PROJECT_DIR=$(cd "$PROJECT_DIR" && pwd)
-
-          echo "ANDROID/GRADLE PROJECT FOUND:"
-          echo "$PROJECT_DIR"
-
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
-      - name: Show Project Structure
-        shell: bash
-        run: |
-          echo "================================="
-          echo "PROJECT STRUCTURE"
-          echo "================================="
-
-          echo "Project:"
-          echo "$PROJECT_DIR"
-
-          echo ""
-
-          ls -la "$PROJECT_DIR"
-
-          echo ""
-
-          if [ ! -d "$PROJECT_DIR/app" ]; then
-            echo "WARNING: app folder not directly found."
-            echo "Searching for app folder..."
-
-            APP_DIR=$(find "$PROJECT_DIR" -type d -name "app" | head -n 1)
-
-            if [ -z "$APP_DIR" ]; then
-              echo "ERROR: Android app folder not found."
-              exit 1
-            fi
-
-            echo "APP FOUND:"
-            echo "$APP_DIR"
-
-            echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
-          else
-            echo "APP FOUND:"
-            echo "$PROJECT_DIR/app"
-
-            echo "APP_DIR=$PROJECT_DIR/app" >> "$GITHUB_ENV"
-          fi
-
-      - name: Fix AndroidManifest
+      - name: Detect Project
         shell: bash
         run: |
           set -e
 
-          MANIFEST="$APP_DIR/src/main/AndroidManifest.xml"
+          echo "Searching for Android project..."
 
-          echo "================================="
-          echo "CHECKING ANDROID MANIFEST"
-          echo "================================="
+          ANDROID_DIR=$(find extracted -type f -name "settings.gradle" -o -name "settings.gradle.kts" | head -n 1)
+
+          if [ -z "$ANDROID_DIR" ]; then
+            echo "ERROR: Android Gradle project not found."
+            find extracted -maxdepth 5 -type f | head -300
+            exit 1
+          fi
+
+          ANDROID_DIR=$(dirname "$ANDROID_DIR")
+
+          echo "ANDROID PROJECT:"
+          echo "$ANDROID_DIR"
+
+          echo "ANDROID_DIR=$ANDROID_DIR" >> "$GITHUB_ENV"
+
+          if [ -f "extracted/package.json" ]; then
+            echo "WEB PROJECT FOUND"
+            echo "WEB_DIR=extracted" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install NPM Dependencies
+        if: ${{ env.WEB_DIR != '' }}
+        working-directory: extracted
+        shell: bash
+        run: |
+          set -e
+
+          echo "Installing npm dependencies..."
+
+          npm install
+
+      - name: Capacitor Sync
+        if: ${{ env.WEB_DIR != '' }}
+        working-directory: extracted
+        shell: bash
+        run: |
+          set -e
+
+          echo "Running Capacitor sync..."
+
+          npx cap sync android
+
+      - name: Install Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Create Gradle Wrapper
+        working-directory: ${{ env.ANDROID_DIR }}
+        shell: bash
+        run: |
+          set -e
+
+          echo "Creating Gradle wrapper..."
+
+          gradle wrapper --gradle-version 8.7
+
+          chmod +x gradlew
+
+          echo "Gradle wrapper created."
+
+      - name: Fix Android Resources
+        working-directory: ${{ env.ANDROID_DIR }}
+        shell: bash
+        run: |
+          set -e
+
+          MANIFEST="app/src/main/AndroidManifest.xml"
 
           if [ ! -f "$MANIFEST" ]; then
             echo "ERROR: AndroidManifest.xml not found."
-            echo "Searching..."
-
-            MANIFEST=$(find "$APP_DIR" -type f -name "AndroidManifest.xml" | head -n 1)
-
-            if [ -z "$MANIFEST" ]; then
-              echo "ERROR: AndroidManifest.xml does not exist."
-              exit 1
-            fi
+            exit 1
           fi
 
-          echo "MANIFEST:"
-          echo "$MANIFEST"
-
-          echo ""
-          echo "Fixing missing launcher resources..."
+          echo "Fixing AndroidManifest..."
 
           sed -i 's/android:icon="@mipmap\/ic_launcher"//g' "$MANIFEST"
           sed -i 's/android:roundIcon="@mipmap\/ic_launcher_round"//g' "$MANIFEST"
 
           sed -i 's#android:theme="@style/Theme.TestMitra"#android:theme="@android:style/Theme.Material.Light.NoActionBar"#g' "$MANIFEST"
 
+          echo "Manifest fixed."
+
+      - name: Check Gradle Project
+        working-directory: ${{ env.ANDROID_DIR }}
+        shell: bash
+        run: |
+          echo "========== ANDROID PROJECT =========="
+
+          ls -la
+
           echo ""
-          echo "MANIFEST AFTER FIX:"
-          cat "$MANIFEST"
 
-      - name: Make Gradle Executable
+          if [ ! -f "gradlew" ]; then
+            echo "ERROR: gradlew was not created."
+            exit 1
+          fi
+
+          if [ ! -d "app" ]; then
+            echo "ERROR: app folder not found."
+            exit 1
+          fi
+
+          echo "Android project is ready."
+
+      - name: Clean Android Project
+        working-directory: ${{ env.ANDROID_DIR }}
         shell: bash
         run: |
-          chmod +x "$PROJECT_DIR/gradlew"
-
-      - name: Clean Project
-        shell: bash
-        run: |
-          cd "$PROJECT_DIR"
           ./gradlew clean --no-daemon
 
-      - name: Build Debug APK
+      - name: Build TEST MITRA APK
+        working-directory: ${{ env.ANDROID_DIR }}
         shell: bash
         run: |
-          cd "$PROJECT_DIR"
+          set -e
 
           echo "================================="
           echo "BUILDING TEST MITRA APK"
@@ -179,19 +187,20 @@ jobs:
       - name: Find APK
         shell: bash
         run: |
-          echo "================================="
-          echo "SEARCHING APK"
-          echo "================================="
+          set -e
 
-          find "$PROJECT_DIR" -type f -name "*.apk" -print
+          echo "========== APK FILES =========="
 
-          APK=$(find "$PROJECT_DIR" -type f -name "*.apk" | head -n 1)
+          find "$ANDROID_DIR" -type f -name "*.apk" -print
+
+          APK=$(find "$ANDROID_DIR" -type f -name "*.apk" | head -n 1)
 
           if [ -z "$APK" ]; then
             echo "ERROR: APK was not generated."
             exit 1
           fi
 
+          echo ""
           echo "APK SUCCESSFULLY GENERATED:"
           echo "$APK"
 
