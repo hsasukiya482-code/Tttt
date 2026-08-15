@@ -23,13 +23,6 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: npm
-          cache-dependency-path: extracted/package.json
-
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
@@ -37,6 +30,10 @@ jobs:
         shell: bash
         run: |
           set -e
+
+          echo "================================="
+          echo "FINDING TEST MITRA ZIP"
+          echo "================================="
 
           ZIP_FILE=$(find . -maxdepth 2 -type f -iname "*.zip" | head -n 1)
 
@@ -48,60 +45,102 @@ jobs:
           echo "ZIP FOUND:"
           echo "$ZIP_FILE"
 
+          rm -rf extracted
           mkdir -p extracted
 
           unzip -q "$ZIP_FILE" -d extracted
 
-          echo "ZIP extracted successfully."
+          echo "ZIP EXTRACTED SUCCESSFULLY."
 
       - name: Detect Project
         shell: bash
         run: |
           set -e
 
-          echo "Searching for Android project..."
+          echo "================================="
+          echo "DETECTING PROJECT"
+          echo "================================="
 
-          ANDROID_DIR=$(find extracted -type f -name "settings.gradle" -o -name "settings.gradle.kts" | head -n 1)
+          PACKAGE_FILE=$(find extracted -type f -name "package.json" | head -n 1)
 
-          if [ -z "$ANDROID_DIR" ]; then
-            echo "ERROR: Android Gradle project not found."
+          if [ -z "$PACKAGE_FILE" ]; then
+            echo "ERROR: package.json not found."
+            find extracted -maxdepth 5 -type f | head -200
+            exit 1
+          fi
+
+          WEB_DIR=$(dirname "$PACKAGE_FILE")
+
+          echo "WEB PROJECT:"
+          echo "$WEB_DIR"
+
+          echo "WEB_DIR=$WEB_DIR" >> "$GITHUB_ENV"
+
+          SETTINGS_FILE=$(find extracted -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1)
+
+          if [ -n "$SETTINGS_FILE" ]; then
+            ANDROID_DIR=$(dirname "$SETTINGS_FILE")
+            echo "ANDROID PROJECT:"
+            echo "$ANDROID_DIR"
+            echo "ANDROID_DIR=$ANDROID_DIR" >> "$GITHUB_ENV"
+          else
+            echo "Android project will be created/synced by Capacitor."
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install NPM Dependencies
+        working-directory: ${{ env.WEB_DIR }}
+        shell: bash
+        run: |
+          set -e
+
+          echo "================================="
+          echo "INSTALLING NPM DEPENDENCIES"
+          echo "================================="
+
+          npm install
+
+      - name: Build Web App
+        working-directory: ${{ env.WEB_DIR }}
+        shell: bash
+        run: |
+          set -e
+
+          echo "================================="
+          echo "BUILDING WEB APP"
+          echo "================================="
+
+          npm run build
+
+      - name: Find Android Project
+        shell: bash
+        run: |
+          set -e
+
+          if [ -z "${ANDROID_DIR:-}" ]; then
+            echo "Searching for Android project..."
+
+            SETTINGS_FILE=$(find extracted -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1)
+
+            if [ -n "$SETTINGS_FILE" ]; then
+              ANDROID_DIR=$(dirname "$SETTINGS_FILE")
+              echo "ANDROID_DIR=$ANDROID_DIR" >> "$GITHUB_ENV"
+            fi
+          fi
+
+          if [ -z "${ANDROID_DIR:-}" ]; then
+            echo "ERROR: Android project not found."
+            echo "Available files:"
             find extracted -maxdepth 5 -type f | head -300
             exit 1
           fi
 
-          ANDROID_DIR=$(dirname "$ANDROID_DIR")
-
           echo "ANDROID PROJECT:"
           echo "$ANDROID_DIR"
-
-          echo "ANDROID_DIR=$ANDROID_DIR" >> "$GITHUB_ENV"
-
-          if [ -f "extracted/package.json" ]; then
-            echo "WEB PROJECT FOUND"
-            echo "WEB_DIR=extracted" >> "$GITHUB_ENV"
-          fi
-
-      - name: Install NPM Dependencies
-        if: ${{ env.WEB_DIR != '' }}
-        working-directory: extracted
-        shell: bash
-        run: |
-          set -e
-
-          echo "Installing npm dependencies..."
-
-          npm install
-
-      - name: Capacitor Sync
-        if: ${{ env.WEB_DIR != '' }}
-        working-directory: extracted
-        shell: bash
-        run: |
-          set -e
-
-          echo "Running Capacitor sync..."
-
-          npx cap sync android
 
       - name: Install Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -114,15 +153,19 @@ jobs:
         run: |
           set -e
 
-          echo "Creating Gradle wrapper..."
+          echo "================================="
+          echo "CREATING GRADLE WRAPPER"
+          echo "================================="
 
-          gradle wrapper --gradle-version 8.7
+          if [ ! -f "gradlew" ]; then
+            gradle wrapper --gradle-version 8.7
+          fi
 
           chmod +x gradlew
 
-          echo "Gradle wrapper created."
+          echo "Gradle wrapper ready."
 
-      - name: Fix Android Resources
+      - name: Fix Android Manifest
         working-directory: ${{ env.ANDROID_DIR }}
         shell: bash
         run: |
@@ -142,20 +185,20 @@ jobs:
 
           sed -i 's#android:theme="@style/Theme.TestMitra"#android:theme="@android:style/Theme.Material.Light.NoActionBar"#g' "$MANIFEST"
 
-          echo "Manifest fixed."
+          echo "AndroidManifest fixed."
 
-      - name: Check Gradle Project
+      - name: Check Android Project
         working-directory: ${{ env.ANDROID_DIR }}
         shell: bash
         run: |
-          echo "========== ANDROID PROJECT =========="
+          set -e
 
-          ls -la
-
-          echo ""
+          echo "================================="
+          echo "CHECKING ANDROID PROJECT"
+          echo "================================="
 
           if [ ! -f "gradlew" ]; then
-            echo "ERROR: gradlew was not created."
+            echo "ERROR: gradlew not found."
             exit 1
           fi
 
@@ -166,7 +209,7 @@ jobs:
 
           echo "Android project is ready."
 
-      - name: Clean Android Project
+      - name: Clean Project
         working-directory: ${{ env.ANDROID_DIR }}
         shell: bash
         run: |
@@ -189,7 +232,9 @@ jobs:
         run: |
           set -e
 
-          echo "========== APK FILES =========="
+          echo "================================="
+          echo "SEARCHING APK"
+          echo "================================="
 
           find "$ANDROID_DIR" -type f -name "*.apk" -print
 
@@ -200,7 +245,6 @@ jobs:
             exit 1
           fi
 
-          echo ""
           echo "APK SUCCESSFULLY GENERATED:"
           echo "$APK"
 
